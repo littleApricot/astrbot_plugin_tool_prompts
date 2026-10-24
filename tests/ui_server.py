@@ -43,6 +43,17 @@ manager.func_list = [
 star_map["fixture.memes"] = StarMetadata(
     name="fixture-memes", display_name="表情图库（测试）"
 )
+try:
+    from astrbot_plugin_lcm.main import LCM
+except ModuleNotFoundError:
+    LCM = None
+if LCM is not None:
+    # Use the actual LCM declarations, with no worker, history or API connection.
+    lcm_owner = object.__new__(LCM)
+    manager.func_list.extend(lcm_owner.history_tools())
+    star_map[LCM.__module__] = StarMetadata(
+        name="astrbot_plugin_lcm", display_name="LCM 上下文与历史"
+    )
 registered = []
 
 

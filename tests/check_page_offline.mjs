@@ -25,6 +25,13 @@ try{
  const bridge=`<script>window.AstrBotPluginPage={apiGet:path=>window.toolFixtureAPI('GET',path),apiPost:(path,body)=>window.toolFixtureAPI('POST',path,body)};</script>`,html=await readFile('pages/tools/index.html','utf8');
  await page.setContent(html.replace('<head>','<head>'+bridge));
  await page.waitForFunction(()=>document.getElementById('status').textContent==='');
+ const lcmTools=initial.tools.filter(tool=>tool.source==='astrbot_plugin_lcm');
+ if(lcmTools.length){
+  assert.equal(lcmTools.length,3);await page.locator('#source').selectOption(JSON.stringify(['plugin','astrbot_plugin_lcm']));assert.equal(await page.locator('#list button').count(),3);
+  await page.locator('#list button').filter({hasText:'lcm_search'}).click();await page.locator('#description').fill('需要查证原话时主动检索 LCM 历史。');await page.locator('textarea[data-path="/properties/query"]').fill('只影响查询关键词的说明');await page.locator('#save').click();await page.waitForFunction(()=>document.getElementById('status').textContent.startsWith('已保存'));
+  const payload=await api('GET','schema'),tool=payload.schema.find(item=>item.function.name==='lcm_search').function;assert.match(tool.description,/主动检索 LCM/);assert.equal(tool.parameters.properties.query.description,'只影响查询关键词的说明');assert.equal(tool.parameters.properties.sender.description,undefined);
+  await page.locator('#reset').click();await page.waitForFunction(()=>document.getElementById('status').textContent.startsWith('已恢复'));
+ }
  await page.locator('#source').selectOption(JSON.stringify(['plugin','fixture-memes']));
  assert.equal(await page.locator('#list button').count(),2);
  await page.locator('#list button').filter({hasText:'meme_search'}).click();
@@ -47,7 +54,7 @@ try{
  await page.locator('#search').fill('');await page.locator('#list button').filter({hasText:'meme_search'}).click();await page.screenshot({path:'/private/tmp/tool-prompts-desktop.png',fullPage:true});
  await page.setViewportSize({width:390,height:844});await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),true);await page.screenshot({path:'/private/tmp/tool-prompts-mobile.png',fullPage:true});
  assert.deepEqual(errors,[]);
- console.log(JSON.stringify({nativeTools:initial.tools.length,sourceFilter:true,search:true,saveReachedNativeSchema:true,originalsUnchanged:true,restartPersistence:true,staleEditorRejected:true,resetUsesLatestDefault:true,customFilter:true,disabledToolVisible:true,xssSafe:true,mobileNoOverflow:true,scriptErrors:errors,apiTransport:'native dashboard extension dispatcher via ASGI pipes'}));
+ console.log(JSON.stringify({nativeTools:initial.tools.length,registeredLCMTools:lcmTools.length,lcmDescriptionsEdited:lcmTools.length===3,aliasedParameterIsolation:true,sourceFilter:true,search:true,saveReachedNativeSchema:true,originalsUnchanged:true,restartPersistence:true,staleEditorRejected:true,resetUsesLatestDefault:true,customFilter:true,disabledToolVisible:true,xssSafe:true,mobileNoOverflow:true,scriptErrors:errors,apiTransport:'native dashboard extension dispatcher via ASGI pipes'}));
 }finally{
  if(browser)await browser.close();lines.close();python.stdin.end();if(python.exitCode===null&&python.signalCode===null){const exited=new Promise(resolve=>python.once('exit',resolve));python.kill('SIGTERM');await exited;}await rm(runtime,{recursive:true,force:true});for(const task of pending.values()){clearTimeout(task.timer);task.reject(Error('fixture closed'));}
 }

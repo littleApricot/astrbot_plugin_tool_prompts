@@ -173,7 +173,9 @@ class DescriptionStore:
             entry.get("parameters")
             and getattr(tool, "_tool_prompts_mode", "") != "light"
         ):
-            result.parameters = copy.deepcopy(tool.parameters)
+            # Schema nodes can share dict instances in Python declarations.
+            # JSON round-trip keeps editing one parameter from changing another.
+            result.parameters = json.loads(json.dumps(tool.parameters))
             for path, _, node, _ in schema_nodes(result.parameters):
                 if path in entry["parameters"]:
                     node["description"] = entry["parameters"][path]

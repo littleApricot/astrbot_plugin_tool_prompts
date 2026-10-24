@@ -388,3 +388,20 @@ def test_invalid_saved_file_is_never_silently_overwritten(tmp_path):
     with pytest.raises(ValueError):
         DescriptionStore(path)
     assert json.loads(path.read_text())["version"] == 99
+
+
+def test_editing_aliased_parameter_nodes_does_not_change_other_fields(setup):
+    text = {"type": "string"}
+    setup.tool.parameters = {
+        "type": "object",
+        "properties": {"query": text, "sender": text},
+    }
+    save(setup, parameters={"/properties/query": "只改搜索关键词"})
+    params = ToolSet([setup.tool]).openai_schema()[0]["function"]["parameters"]
+    assert params["properties"]["query"]["description"] == "只改搜索关键词"
+    assert "description" not in params["properties"]["sender"]
+    assert (
+        setup.tool.parameters["properties"]["query"]
+        is setup.tool.parameters["properties"]["sender"]
+    )
+    assert "description" not in text
