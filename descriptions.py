@@ -196,6 +196,46 @@ class ToolCatalog:
                 tools[key] = tool
         return tools
 
+    def control(self, tool):
+        if self.manager.is_builtin_tool(tool.name):
+            return False, "内置工具请在对应功能配置中开启或关闭"
+        matches = [item for item in self.manager.func_list if item.name == tool.name]
+        if len(matches) != 1 or matches[0] is not tool:
+            return False, "存在同名注册，请在 AstrBot 原生工具管理中处理开关"
+        star = star_map.get(getattr(tool, "handler_module_path", None))
+        if star is not None and not star.activated and not tool.active:
+            return False, "所属插件已停用，请先在插件管理中启用插件"
+        return True, ""
+
+    async def set_active(self, payload):
+        if (
+            not isinstance(payload, dict)
+            or set(payload) != {"id", "active"}
+            or not isinstance(payload["id"], str)
+            or type(payload["active"]) is not bool
+        ):
+            raise ValueError("请提交工具标识和布尔开关值")
+        tool = self.registered().get(payload["id"])
+        if tool is None:
+            raise ConflictError("工具已卸载或断开连接，请刷新列表")
+        allowed, reason = self.control(tool)
+        if not allowed:
+            raise ValueError(reason)
+        previous = tool.active
+        try:
+            if payload["active"]:
+                updated = await self.manager.activate_llm_tool_async(
+                    tool.name, star_map=star_map
+                )
+            else:
+                updated = await self.manager.deactivate_llm_tool_async(tool.name)
+            if not updated:
+                raise RuntimeError("Native tool activation update failed")
+        except Exception:
+            tool.active = previous
+            raise
+        return self.view()
+
     def describe(self, tool):
         kind, source, name = identity(tool)
         effective = self.store.effective(tool)
@@ -226,6 +266,7 @@ class ToolCatalog:
             )
         module = getattr(tool, "handler_module_path", None)
         star = star_map.get(module) if module else None
+        can_toggle, toggle_reason = self.control(tool)
         return {
             "id": tool_id(tool),
             "name": name,
@@ -233,6 +274,8 @@ class ToolCatalog:
             "source": source,
             "source_display": (star.display_name or source) if star else source,
             "active": tool.active,
+            "can_toggle": can_toggle,
+            "toggle_reason": toggle_reason,
             "description": effective.description,
             "original_description": tool.description,
             "overridden": bool(entry),
@@ -247,7 +290,7 @@ class ToolCatalog:
     def view(self):
         tools = [self.describe(tool) for tool in self.registered().values()]
         tools.sort(key=lambda item: (item["source_kind"], item["source"], item["name"]))
-        return {"tools": tools, "revision": self.store.revision}
+        return {"tools": tools, "total": len(tools), "revision": self.store.revision}
 
     def update(self, payload, *, reset=False):
         fields = {"id", "revision", "definition_digest"}

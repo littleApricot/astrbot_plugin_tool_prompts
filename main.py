@@ -21,6 +21,7 @@ class ToolPrompts(Star):
             ("tools", self.api_tools, ["GET"]),
             ("save", self.api_save, ["POST"]),
             ("reset", self.api_reset, ["POST"]),
+            ("enabled", self.api_enabled, ["POST"]),
         ):
             context.register_web_api(
                 "/astrbot_plugin_tool_prompts/" + path,
@@ -38,26 +39,33 @@ class ToolPrompts(Star):
             return error_response("插件未启用，请启用后刷新页面", status_code=503)
         return json_response(self.catalog.view())
 
-    async def _update(self, *, reset=False):
+    async def _update(self, *, reset=False, enabled=False):
         if not self.running:
             return error_response("插件未启用，请启用后刷新页面", status_code=503)
         try:
             payload = await request.json()
-            result = self.catalog.update(payload, reset=reset)
+            result = (
+                await self.catalog.set_active(payload)
+                if enabled
+                else self.catalog.update(payload, reset=reset)
+            )
             return json_response(result)
         except ConflictError as exc:
             return error_response(str(exc), status_code=409)
         except (ValueError, TypeError) as exc:
             return error_response(str(exc), status_code=400)
-        except OSError:
-            self.logger.exception("Failed to save tool description overrides")
-            return error_response("保存失败，请检查数据目录后重试", status_code=500)
+        except Exception:
+            self.logger.exception("Failed to persist tool settings")
+            return error_response("设置保存失败，请检查后台日志后重试", status_code=500)
 
     async def api_save(self):
         return await self._update()
 
     async def api_reset(self):
         return await self._update(reset=True)
+
+    async def api_enabled(self):
+        return await self._update(enabled=True)
 
     async def terminate(self):
         self.running = False

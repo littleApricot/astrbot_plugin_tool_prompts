@@ -7,8 +7,11 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from astrbot.core.agent.tool import FunctionTool
+from astrbot.core.db.sqlite import SQLiteDatabase
+from astrbot.core.provider import func_tool_manager
 from astrbot.core.provider.func_tool_manager import FunctionToolManager
 from astrbot.core.star.star import StarMetadata, star_map
+from astrbot.core.utils.shared_preferences import SharedPreferences
 from fastapi import FastAPI, Request
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -43,6 +46,43 @@ manager.func_list = [
 star_map["fixture.memes"] = StarMetadata(
     name="fixture-memes", display_name="表情图库（测试）"
 )
+for name in ("meme_view", "meme_edit", "meme_disable"):
+    manager.func_list.append(
+        FunctionTool(
+            name=name,
+            description="测试图库工具",
+            parameters={"type": "object", "properties": {}},
+            handler_module_path="fixture.memes",
+        )
+    )
+manager.func_list.append(
+    FunctionTool(
+        name="search_memes",
+        description="旧插件的独立工具",
+        parameters={},
+        handler_module_path="fixture.old",
+        active=False,
+    )
+)
+star_map["fixture.old"] = StarMetadata(
+    name="old-memes", display_name="旧表情包管理器（测试）"
+)
+manager.func_list.extend(
+    FunctionTool(
+        name=f"bulk_{index:03d}",
+        description="数量检查",
+        parameters={},
+        handler_module_path="fixture.bulk",
+    )
+    for index in range(125)
+)
+star_map["fixture.bulk"] = StarMetadata(
+    name="bulk-fixture", display_name="数量检查（测试）"
+)
+preference_db = SQLiteDatabase(str(root / "native-preferences.sqlite3"))
+preferences = SharedPreferences(preference_db)
+func_tool_manager.sp = preferences
+preferences_ready = False
 try:
     from astrbot_plugin_lcm.main import LCM
 except ModuleNotFoundError:
@@ -82,7 +122,12 @@ app = FastAPI()
 
 @app.api_route("/api/{name}", methods=["GET", "POST"])
 async def api(name: str, request: Request):
-    global plugin
+    global plugin, preferences, preferences_ready
+    if not preferences_ready:
+        await preferences.put_async(
+            "global", "global", "inactivated_llm_tools", ["meme_send", "search_memes"]
+        )
+        preferences_ready = True
     if not plugin.running:
         await plugin.initialize()
     if name == "schema":
@@ -92,6 +137,14 @@ async def api(name: str, request: Request):
         }
     if name == "restart":
         await plugin.terminate()
+        await preferences.close()
+        preferences = SharedPreferences(preference_db)
+        func_tool_manager.sp = preferences
+        disabled = await preferences.get_async(
+            "global", "global", "inactivated_llm_tools", []
+        )
+        for tool in manager.func_list:
+            tool.active = tool.name not in disabled
         plugin = make_plugin()
         await plugin.initialize()
         return {"restarted": True}
