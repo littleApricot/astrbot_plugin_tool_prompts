@@ -62,10 +62,16 @@ async def test_saved_descriptions_reach_native_openai_http_payload(setup):
             == "新查询说明"
         )
         assert calls[0]["messages"][-1]["content"] == "offline"
+        save(setup, description="", parameters={"/properties/query": ""})
+        await provider.text_chat(prompt="cleared", func_tool=ToolSet([setup.tool]))
+        cleared = calls[1]["tools"][0]["function"]
+        assert "description" not in cleared
+        assert "description" not in cleared["parameters"]["properties"]["query"]
+        assert cleared["parameters"]["required"] == ["query"]
         setup.bridge.stop()
         await provider.text_chat(
             prompt="offline again", func_tool=ToolSet([setup.tool])
         )
-        assert calls[1]["tools"][0]["function"]["description"] == "原始工具说明"
+        assert calls[2]["tools"][0]["function"]["description"] == "原始工具说明"
     finally:
         await provider.client.close()

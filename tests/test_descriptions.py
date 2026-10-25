@@ -127,6 +127,84 @@ def test_native_light_and_parameter_modes_keep_separate_fields(setup):
     assert native.get_tool("search_meme").handler is None
 
 
+@pytest.mark.parametrize("format", ["openai", "anthropic", "google"])
+@pytest.mark.parametrize("blank", ["", " \n\t　"])
+def test_cleared_descriptions_are_absent_in_native_schemas(setup, format, blank):
+    setup.tool.parameters["description"] = "原始整体说明"
+    nested = setup.tool.parameters["properties"]["nested/~"]
+    nested["description"] = "原始数组说明"
+    nested["items"]["properties"]["x"]["description"] = "原始嵌套说明"
+    original = copy.deepcopy(setup.tool.parameters)
+    paths = [
+        "",
+        "/properties/query",
+        "/properties/nested~1~0",
+        "/properties/nested~1~0/items/properties/x",
+    ]
+    save(setup, description=blank, parameters=dict.fromkeys(paths, blank))
+    native = setup.manager.get_full_tool_set()
+    for tools in (
+        native,
+        native.get_light_tool_set(),
+        native.get_param_only_tool_set(),
+    ):
+        serialized = getattr(tools, format + "_schema")()
+        item = (
+            serialized[0]["function"]
+            if format == "openai"
+            else serialized[0]
+            if format == "anthropic"
+            else serialized["function_declarations"][0]
+        )
+        assert "description" not in item
+        params = item["input_schema" if format == "anthropic" else "parameters"]
+        assert "description" not in params
+        if (
+            tools is not native
+            and getattr(tools.tools[0], "_tool_prompts_mode") == "light"
+        ):
+            continue
+        assert params["required"] == ["query"]
+        assert params["properties"]["query"] == {"type": "string", "enum": ["a", "b"]}
+        assert "description" not in params["properties"]["nested/~"]
+        assert params["properties"]["nested/~"]["items"]["properties"]["x"] == {
+            "type": "string"
+        }
+    assert setup.tool.description == "原始工具说明"
+    assert setup.tool.parameters == original
+    restored = DescriptionStore(setup.store.path)
+    assert (
+        restored.effective(setup.tool).parameters
+        == setup.store.effective(setup.tool).parameters
+    )
+    item = setup.catalog.describe(setup.tool)
+    setup.catalog.update(
+        {
+            "id": item["id"],
+            "revision": setup.store.revision,
+            "definition_digest": item["definition_digest"],
+        },
+        reset=True,
+    )
+    assert native.openai_schema()[0]["function"]["parameters"] == original
+    assert native.openai_schema()[0]["function"]["description"] == "原始工具说明"
+
+
+def test_blank_schema_descriptions_do_not_remove_description_inside_data(setup):
+    schema = setup.tool.parameters
+    schema["description"] = ""
+    schema["properties"]["limit"]["description"] = "  "
+    schema["properties"]["query"]["default"] = {"description": ""}
+    schema["$defs"] = {"record": {"type": "object", "description": ""}}
+    original = copy.deepcopy(schema)
+    result = ToolSet([setup.tool]).openai_schema()[0]["function"]["parameters"]
+    assert "description" not in result
+    assert "description" not in result["properties"]["limit"]
+    assert "description" not in result["$defs"]["record"]
+    assert result["properties"]["query"]["default"] == {"description": ""}
+    assert schema == original
+
+
 def test_same_name_sources_and_mcp_reconnect_do_not_mix(setup):
     client = SimpleNamespace(
         call_tool_with_reconnect=AsyncMock(

@@ -163,22 +163,32 @@ class DescriptionStore:
 
     def effective(self, tool):
         """Make schema-only shallow copies; retain every execution reference."""
-        entry = self.overrides.get(tool_id(tool))
-        if not entry:
-            return tool
+        entry = self.overrides.get(tool_id(tool), {})
         result = copy.copy(tool)
         if getattr(tool, "_tool_prompts_mode", "") != "parameters":
             result.description = entry.get("description", tool.description)
-        if (
-            entry.get("parameters")
-            and getattr(tool, "_tool_prompts_mode", "") != "light"
+        if isinstance(result.description, str) and not result.description.strip():
+            result.description = ""
+        parameters = (
+            entry.get("parameters", {})
+            if getattr(tool, "_tool_prompts_mode", "") != "light"
+            else {}
+        )
+        if parameters or any(
+            isinstance(node.get("description"), str) and not node["description"].strip()
+            for _, _, node, _ in schema_nodes(tool.parameters)
         ):
             # Schema nodes can share dict instances in Python declarations.
             # JSON round-trip keeps editing one parameter from changing another.
             result.parameters = json.loads(json.dumps(tool.parameters))
             for path, _, node, _ in schema_nodes(result.parameters):
-                if path in entry["parameters"]:
-                    node["description"] = entry["parameters"][path]
+                if path in parameters:
+                    node["description"] = parameters[path]
+                if (
+                    isinstance(node.get("description"), str)
+                    and not node["description"].strip()
+                ):
+                    node.pop("description")
         return result
 
 

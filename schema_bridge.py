@@ -44,7 +44,7 @@ class SchemaBridge:
     def _serializer(self, original):
         @wraps(original)
         def serialize(toolset, *args, **kwargs):
-            if not self.active or not self.store.overrides:
+            if not self.active:
                 return original(toolset, *args, **kwargs)
             proxy = copy.copy(toolset)
             proxy.tools = [self.store.effective(tool) for tool in toolset.tools]
