@@ -208,7 +208,7 @@ class ToolCatalog:
 
     def control(self, tool):
         if self.manager.is_builtin_tool(tool.name):
-            return False, "内置工具请在对应功能配置中开启或关闭"
+            return False, "内置工具请在下方保存原功能配置"
         matches = [item for item in self.manager.func_list if item.name == tool.name]
         if len(matches) != 1 or matches[0] is not tool:
             return False, "存在同名注册，请在 AstrBot 原生工具管理中处理开关"

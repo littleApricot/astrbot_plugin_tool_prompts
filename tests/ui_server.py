@@ -1,21 +1,27 @@
 """Real plugin handlers and native schemas with synthetic tools and no network."""
 
+import copy
 import sys
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from astrbot.core.agent.tool import FunctionTool
+from astrbot.core.astrbot_config_mgr import AstrBotConfigManager
+from astrbot.core.config.astrbot_config import AstrBotConfig
+from astrbot.core.config.default import DEFAULT_CONFIG
 from astrbot.core.db.sqlite import SQLiteDatabase
 from astrbot.core.provider import func_tool_manager
 from astrbot.core.provider.func_tool_manager import FunctionToolManager
 from astrbot.core.star.star import StarMetadata, star_map
 from astrbot.core.utils.shared_preferences import SharedPreferences
+from astrbot.dashboard.services.config_service import ConfigProfileService
 from fastapi import FastAPI, Request
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from astrbot_plugin_tool_prompts.main import ToolPrompts
+from astrbot_plugin_tool_prompts.native_config import FIELDS, value_at
 
 temporary = tempfile.TemporaryDirectory(prefix="tool-prompts-ui-")
 root = Path(temporary.name)
@@ -83,6 +89,22 @@ preference_db = SQLiteDatabase(str(root / "native-preferences.sqlite3"))
 preferences = SharedPreferences(preference_db)
 func_tool_manager.sp = preferences
 preferences_ready = False
+conf = AstrBotConfig(
+    str(root / "default.json"), default_config=copy.deepcopy(DEFAULT_CONFIG)
+)
+other = AstrBotConfig(
+    str(root / "second.json"), default_config=copy.deepcopy(DEFAULT_CONFIG)
+)
+conf["provider_settings"]["web_search"] = True
+conf["provider_settings"]["websearch_provider"] = "tavily"
+conf.save_config()
+config_manager = AstrBotConfigManager(conf, None, preferences)
+config_manager.confs["second"] = other
+config_manager.abconf_data = {"second": {"name": "第二配置", "path": "second.json"}}
+lifecycle = SimpleNamespace(
+    astrbot_config_mgr=config_manager, reload_pipeline_scheduler=AsyncMock()
+)
+config_service = ConfigProfileService(lifecycle, runtime={})
 try:
     from astrbot_plugin_lcm.main import LCM
 except ModuleNotFoundError:
@@ -103,6 +125,7 @@ def register(path, handler, methods, description):
 
 
 context = SimpleNamespace(
+    astrbot_config_mgr=config_manager,
     get_llm_tool_manager=lambda: manager,
     register_web_api=register,
     registered_web_apis=registered,
@@ -118,6 +141,7 @@ def make_plugin():
 
 plugin = make_plugin()
 app = FastAPI()
+app.state.services = SimpleNamespace(config_profiles=config_service)
 
 
 @app.api_route("/api/{name}", methods=["GET", "POST"])
@@ -135,6 +159,19 @@ async def api(name: str, request: Request):
             "schema": manager.get_full_tool_set().openai_schema(),
             "original": manager.func_list[0].description,
         }
+    if name == "native_original":
+        config = config_service.get_profile(
+            request.query_params.get("profile_id", "default")
+        )["config"]
+        return {
+            "values": {key: value_at(config, key) for key in FIELDS},
+            "reloads": lifecycle.reload_pipeline_scheduler.await_count,
+        }
+    if name == "native_original_change":
+        config = copy.deepcopy(dict(config_manager.confs["default"]))
+        config["provider_settings"]["websearch_provider"] = "brave"
+        await config_service.update_profile("default", config)
+        return {"changed": True}
     if name == "restart":
         await plugin.terminate()
         await preferences.close()
@@ -146,6 +183,13 @@ async def api(name: str, request: Request):
         for tool in manager.func_list:
             tool.active = tool.name not in disabled
         plugin = make_plugin()
+        for config in config_manager.confs.values():
+            config.clear()
+            import json
+
+            config.update(
+                json.loads(Path(config.config_path).read_text(encoding="utf-8-sig"))
+            )
         await plugin.initialize()
         return {"restarted": True}
     if name == "definition_change":

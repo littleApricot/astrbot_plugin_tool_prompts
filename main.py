@@ -6,6 +6,7 @@ from astrbot.api.star import Context, Star, StarTools
 from astrbot.api.web import error_response, json_response, request
 
 from .descriptions import ConflictError, DescriptionStore, ToolCatalog
+from .native_config import NativeConfigs
 from .schema_bridge import SchemaBridge
 
 
@@ -16,12 +17,14 @@ class ToolPrompts(Star):
         self.store = DescriptionStore(directory / "overrides.json")
         self.catalog = ToolCatalog(context.get_llm_tool_manager(), self.store)
         self.bridge = SchemaBridge(self.store)
+        self.native = NativeConfigs(context.astrbot_config_mgr)
         self.running = False
         for path, handler, methods in (
             ("tools", self.api_tools, ["GET"]),
             ("save", self.api_save, ["POST"]),
             ("reset", self.api_reset, ["POST"]),
             ("enabled", self.api_enabled, ["POST"]),
+            ("native", self.api_native, ["POST"]),
         ):
             context.register_web_api(
                 "/astrbot_plugin_tool_prompts/" + path,
@@ -37,19 +40,32 @@ class ToolPrompts(Star):
     async def api_tools(self):
         if not self.running:
             return error_response("插件未启用，请启用后刷新页面", status_code=503)
-        return json_response(self.catalog.view())
+        try:
+            return json_response(self._view())
+        except ConflictError as exc:
+            return error_response(str(exc), status_code=409)
+
+    def _view(self, profile_id=None):
+        return self.native.view(
+            self.catalog.view(),
+            profile_id or request.query.get("profile_id", "default"),
+        )
 
     async def _update(self, *, reset=False, enabled=False):
         if not self.running:
             return error_response("插件未启用，请启用后刷新页面", status_code=503)
         try:
             payload = await request.json()
+            if not isinstance(payload, dict):
+                raise ValueError("提交内容无效")
+            profile_id = payload.pop("profile_id", "default")
+            self.native.config(profile_id)
             result = (
                 await self.catalog.set_active(payload)
                 if enabled
                 else self.catalog.update(payload, reset=reset)
             )
-            return json_response(result)
+            return json_response(self.native.view(result, profile_id))
         except ConflictError as exc:
             return error_response(str(exc), status_code=409)
         except (ValueError, TypeError) as exc:
@@ -66,6 +82,31 @@ class ToolPrompts(Star):
 
     async def api_enabled(self):
         return await self._update(enabled=True)
+
+    async def api_native(self):
+        if not self.running:
+            return error_response("插件未启用，请启用后刷新页面", status_code=503)
+        try:
+            service = request._request.app.state.services.config_profiles
+            payload = await request.json()
+            if not isinstance(payload, dict):
+                raise ValueError("提交内容无效")
+            profile_id = payload.pop("profile_id", "default")
+            message = await self.native.update(
+                payload,
+                profile_id,
+                service,
+            )
+            result = self._view(profile_id)
+            result["native_message"] = message
+            return json_response(result)
+        except ConflictError as exc:
+            return error_response(str(exc), status_code=409)
+        except (ValueError, TypeError) as exc:
+            return error_response(str(exc), status_code=400)
+        except Exception:
+            self.logger.exception("原工具配置保存失败")
+            return error_response("原配置保存失败，请检查后台日志", status_code=500)
 
     async def terminate(self):
         self.running = False
