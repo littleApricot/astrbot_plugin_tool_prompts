@@ -47,7 +47,12 @@ class SchemaBridge:
             if not self.active:
                 return original(toolset, *args, **kwargs)
             proxy = copy.copy(toolset)
-            proxy.tools = [self.store.effective(tool) for tool in toolset.tools]
+            proxy.tools = [
+                tool
+                if getattr(tool, "_lcm_schema_frozen", False)
+                else self.store.effective(tool)
+                for tool in toolset.tools
+            ]
             return original(proxy, *args, **kwargs)
 
         return serialize
