@@ -5,6 +5,7 @@ from __future__ import annotations
 from astrbot.api.star import Context, Star, StarTools
 from astrbot.api.web import error_response, json_response, request
 
+from .context_policy import PromptPolicy
 from .descriptions import ConflictError, DescriptionStore, ToolCatalog
 from .native_config import NativeConfigs
 from .schema_bridge import SchemaBridge
@@ -18,6 +19,7 @@ class ToolPrompts(Star):
         self.catalog = ToolCatalog(context.get_llm_tool_manager(), self.store)
         self.bridge = SchemaBridge(self.store)
         self.native = NativeConfigs(context.astrbot_config_mgr)
+        self.policy = PromptPolicy(context)
         self.running = False
         for path, handler, methods in (
             ("tools", self.api_tools, ["GET"]),
@@ -30,12 +32,21 @@ class ToolPrompts(Star):
                 "/astrbot_plugin_tool_prompts/" + path,
                 handler,
                 methods,
-                "Tool description editor",
+                "工具管理",
             )
 
     async def initialize(self):
         self.bridge.start()
         self.running = True
+
+    def model_context_policy(self):
+        return self.policy if self.running else None
+
+    def lcm_context_rules(self):
+        return {
+            "owner": "astrbot_plugin_tool_prompts",
+            "history_projector": self.policy.history_entries,
+        }
 
     async def api_tools(self):
         if not self.running:

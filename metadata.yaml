@@ -1,7 +1,7 @@
 name: astrbot_plugin_tool_prompts
-display_name: 工具说明编辑
-desc: 统一管理插件、MCP 开关及内置工具原功能配置，自定义模型看到的工具及参数说明，支持恢复默认。
-version: v0.3.1
+display_name: 工具管理
+desc: 统一管理工具开关、说明和上下文位置，配合 LCM 组装请求，隔离判断与整理资料。
+version: v0.4.0
 author: littleApricot
 repo: https://github.com/littleApricot/astrbot_plugin_tool_prompts
 astrbot_version: ">=4.29.1,<4.30.0"
